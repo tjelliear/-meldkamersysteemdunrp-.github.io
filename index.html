@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Roepnummers Zevenaar</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -223,9 +224,16 @@ select.field[data-urg]{border-left:6px solid var(--c)}
 .prop-tag{font-size:12px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--s1);color:var(--on)}
 .amb-link{display:flex;gap:8px;margin-top:8px}
 .amb-link .field{margin:0;flex:1}
+/* Supabase login */
+#authGate{position:fixed;inset:0;z-index:100;background:var(--bg);display:grid;place-items:center;padding:20px}
+#authCard{width:min(420px,100%);padding:24px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+#authCard h2{margin:0 0 8px;font-size:25px}
+#authCard p{color:var(--ink-2)}
+#authError{color:var(--danger);min-height:1.4em}
 </style>
 </head>
 <body>
+<section id="authGate"><form id="authCard"><h2>Inloggen</h2><p>Log in om het gedeelde testbord te openen.</p><label for="authEmail">E-mailadres</label><input class="field" id="authEmail" type="email" autocomplete="username" required><label for="authPassword">Wachtwoord</label><input class="field" id="authPassword" type="password" autocomplete="current-password" required><button class="btn primary" id="authSubmit" type="submit">Inloggen</button><p id="authError" role="alert"></p><small>Gebruik uitsluitend fictieve testgegevens.</small></form></section>
 <header class="top">
   <div class="row1">
     <h1>Roepnummers Zevenaar</h1>
@@ -233,6 +241,7 @@ select.field[data-urg]{border-left:6px solid var(--c)}
     <span class="spacer"></span>
     <input class="search" id="search" type="search" placeholder="Zoek op nummer, naam, functie of melding" aria-label="Zoeken" autocomplete="off">
     <button class="btn" id="exportBtn" hidden>Exporteer CSV</button>
+    <button class="btn" id="logoutBtn" hidden>Uitloggen</button>
     <button class="btn danger" id="resetBtn">Alles leegmaken</button>
   </div>
   <nav class="tabs" id="tabs" aria-label="Eenheid"></nav>
@@ -508,7 +517,7 @@ function normAmb(v){
   o.log=Array.isArray(v.log)?v.log.filter(function(x){return x&&typeof x.x==='string';}):[];
   return o;
 }
-var db=null,downloads=null;
+var db=null,downloads=null,supabase=null,realtimeChannel=null;
 var mode='connecting';    // connecting | shared | local | error
 var canWrite=true;
 var filterSt='all',tab='all',sub='all',query='';
@@ -1015,49 +1024,15 @@ function loadLocal(){
   }catch(e){}
   rebuildData();
 }
-function write(id,rec){
-  if(mode==='shared'){
-    var ref=db.collection('units').doc(id);
-    return rec?ref.set(rec):ref.delete();
-  }
-  if(rec)rawUnits[id]=rec;else delete rawUnits[id];
-  rebuildData();persistLocal();render();
-  return Promise.resolve();
-}
-function writeMel(mid,patch,isNew){
-  if(mode==='shared'){
-    var ref=db.collection('meldingen').doc(mid);
-    return isNew?ref.set(patch):ref.update(patch);
-  }
-  mel[mid]=isNew?patch:Object.assign({},mel[mid],patch);
-  persistLocal();render();
-  return Promise.resolve();
-}
-function delMel(mid){
-  if(mode==='shared')return db.collection('meldingen').doc(mid).delete();
-  delete mel[mid];persistLocal();render();
-  return Promise.resolve();
-}
-function newMelId(){
-  if(mode==='shared')return db.collection('meldingen').doc().id;
-  return 'm'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-}
-function writeAmb(id,rec){
-  if(mode==='shared'){var ref=db.collection('ambmeldingen').doc(id);return rec?ref.set(rec):ref.delete();}
-  if(rec)amb[id]=rec;else delete amb[id];
-  persistLocal();render();
-  return Promise.resolve();
-}
-function writeParser(did,rec){
-  if(mode==='shared'){var ref=db.collection('ambparser').doc(did);return rec?ref.set(rec):ref.delete();}
-  if(rec)parsersCustom[did]=rec;else delete parsersCustom[did];
-  persistLocal();render();
-  return Promise.resolve();
-}
-function newAmbId(){
-  if(mode==='shared')return db.collection('ambmeldingen').doc().id;
-  return 'a'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-}
+async function sbSave(table,id,rec){var r=rec?await supabase.from(table).upsert({id:id,data:rec}):await supabase.from(table).delete().eq('id',id);if(r.error)throw r.error;}
+async function sbSaveCustom(sectionId,id,rec){var r=rec?await supabase.from('custom_units').upsert({section_id:sectionId,id:id,data:rec}):await supabase.from('custom_units').delete().eq('section_id',sectionId).eq('id',id);if(r.error)throw r.error;}
+function write(id,rec){return sbSave('units',id,rec);}
+async function writeMel(mid,patch,isNew){await sbSave('meldingen',mid,isNew?patch:Object.assign({},mel[mid]||{},patch));}
+function delMel(mid){return sbSave('meldingen',mid,null);}
+function newMelId(){return 'm'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function writeAmb(id,rec){return sbSave('ambmeldingen',id,rec);}
+function writeParser(id,rec){return sbSave('ambparser',id,rec);}
+function newAmbId(){return 'a'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
 function pool(items,n,fn){
   var q=items.slice();
   return Promise.all(Array.from({length:n},function(){
@@ -1216,7 +1191,7 @@ async function savePanel(next,clear){
     if(UNITS[id]&&UNITS[id].custom&&!clear){
       var nl=$('pFnInput').value.trim(),secId=UNITS[id].section.id;
       if(nl!==(UNITS[id].label||'')){
-        if(mode==='shared')await db.collection(secId).doc(id).update({label:nl});
+        if(mode==='shared')await sbSaveCustom(secId,id,Object.assign({},custom[secId][id],{label:nl}));
         else{custom[secId][id].label=nl;rebuildCustom();persistLocal();}
       }
     }
@@ -1234,7 +1209,7 @@ async function resetAll(){
   var ids=Object.keys(data);
   if(!ids.length){toast('Er staat niets op het bord.');return;}
   try{
-    if(mode==='shared'){await pool(ids,4,function(id){return db.collection('units').doc(id).delete();});}
+    if(mode==='shared'){await pool(ids,4,function(id){return sbSave('units',id,null);});}
     else{rawUnits={};rebuildData();persistLocal();render();}
     toast('Alle roepnummers zijn leeggemaakt.');
   }catch(e){onWriteError(e);}
@@ -1270,7 +1245,7 @@ async function addCustom(secId){
   try{
     for(var i=0;i<ok.length;i++){
       var rec={nr:ok[i],label:label,created:Date.now()};
-      if(mode==='shared')await db.collection(secId).doc(ok[i]).set(rec);
+      if(mode==='shared')await sbSaveCustom(secId,ok[i],rec);
       else custom[secId][ok[i]]=rec;
     }
     addDraft[secId]={nr:'',fn:''};
@@ -1288,8 +1263,8 @@ async function removeCustom(){
   if(!ok)return;
   try{
     if(mode==='shared'){
-      await db.collection('units').doc(id).delete();
-      await db.collection(secId).doc(id).delete();
+      await sbSave('units',id,null);
+      await sbSaveCustom(secId,id,null);
     }else{
       delete custom[secId][id];delete rawUnits[id];rebuildCustom();rebuildData();persistLocal();render();
     }
@@ -1481,47 +1456,31 @@ $('confirm').addEventListener('close',function(){answer(false);});
 $('exportBtn').addEventListener('click',exportCsv);
 
 /* ---------- Start ---------- */
-async function init(){
-  render();
-  var c=window.claude;
-  var dbNs=null;
-  try{if(c&&c.use)dbNs=await c.use('db');}catch(e){}
-  try{if(c&&c.use){downloads=await c.use('downloads');if(downloads)$('exportBtn').hidden=false;}}catch(e){}
-  if(dbNs){
-    db=dbNs;mode='shared';
-    try{
-      var u=await c.use('user');
-      if(u){var can=await u.can('data.write');if(can===false)canWrite=false;}
-    }catch(e){}
-    renderMode();
-    var fail=function(){mode='error';canWrite=false;render();applyReadOnly();};
-    db.collection('units').onSnapshot(function(snap){
-      var nr={};
-      snap.docs.forEach(function(doc){var v=normUnit(doc.data());if(v)nr[doc.id]=v;});
-      rawUnits=nr;rebuildData();render();
-    },fail);
-    db.collection('ambparser').onSnapshot(function(snap){
-      var np={};
-      snap.docs.forEach(function(doc){var v=normParser(doc.data());if(v)np[doc.id]=v;});
-      parsersCustom=np;render();
-    },fail);
-    db.collection('ambmeldingen').onSnapshot(function(snap){
-      var na={};
-      snap.docs.forEach(function(doc){var v=normAmb(doc.data());if(v)na[doc.id]=v;});
-      amb=na;
-      if(ambSel&&!amb[ambSel]){ambSel=null;}
-      render();
-    },fail);
-    CUSTOM_SECS.forEach(function(sec){
-      db.collection(sec.id).onSnapshot(function(snap){
-        var nd={};
-        snap.docs.forEach(function(doc){var v=doc.data();if(v)nd[doc.id]={nr:doc.id,label:String(v.label||''),created:v.created||0};});
-        custom[sec.id]=nd;rebuildCustom();rebuildData();render();
-      },fail);
-    });
-  }else{
-    mode='local';loadLocal();render();
-  }
+async function fetchRows(t){var r=await supabase.from(t).select('*');if(r.error)throw r.error;return r.data||[];}
+async function loadAll(){
+ var all=await Promise.all(['units','meldingen','ambmeldingen','ambparser','custom_units'].map(fetchRows));rawUnits={};mel={};amb={};parsersCustom={};
+ all[0].forEach(function(x){var v=normUnit(x.data);if(v)rawUnits[x.id]=v;});
+ all[1].forEach(function(x){if(x.data&&typeof x.data.title==='string')mel[x.id]=x.data;});
+ all[2].forEach(function(x){var v=normAmb(x.data);if(v)amb[x.id]=v;});
+ all[3].forEach(function(x){var v=normParser(x.data);if(v)parsersCustom[x.id]=v;});
+ CUSTOM_SECS.forEach(function(sec){custom[sec.id]={};});
+ all[4].forEach(function(x){if(custom[x.section_id]&&x.data)custom[x.section_id][x.id]={nr:x.id,label:String(x.data.label||''),created:x.data.created||0};});
+ rebuildCustom();rebuildData();render();
+}
+async function startShared(session){
+ mode='shared';canWrite=true;$('authGate').hidden=true;$('logoutBtn').hidden=false;
+ try{await loadAll();if(realtimeChannel)await supabase.removeChannel(realtimeChannel);realtimeChannel=supabase.channel('roepnummers-live');
+ ['units','meldingen','ambmeldingen','ambparser','custom_units'].forEach(function(t){realtimeChannel.on('postgres_changes',{event:'*',schema:'public',table:t},function(){loadAll().catch(function(){toast('Live bijwerken is tijdelijk niet gelukt.');});});});
+ realtimeChannel.subscribe(function(st){if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')$('modeText').textContent='Liveverbinding onderbroken';});renderMode();render();
+ }catch(e){mode='error';$('authError').textContent='Gegevens laden is niet gelukt. Controleer tabellen en RLS-instellingen.';$('authGate').hidden=false;$('logoutBtn').hidden=true;renderMode();}
+}
+async function init(){render();if(!window.supabase||!window.supabase.createClient){$('authError').textContent='Supabase kon niet laden. Vernieuw de pagina.';return;}
+ supabase=window.supabase.createClient('https://zayesdvplgjzpfokdazk.supabase.co','sb_publishable__2gzIkMBjgZAJm-3PCDPXw_-8gNbJnJ1');
+ $('authCard').addEventListener('submit',async function(e){e.preventDefault();var btn=$('authSubmit');btn.disabled=true;$('authError').textContent='Bezig met inloggen…';
+ var r=await supabase.auth.signInWithPassword({email:$('authEmail').value.trim(),password:$('authPassword').value});btn.disabled=false;
+ if(r.error){$('authError').textContent='Inloggen mislukt. Controleer e-mailadres en wachtwoord.';return;}$('authPassword').value='';await startShared(r.data.session);});
+ $('logoutBtn').addEventListener('click',async function(){if(realtimeChannel)await supabase.removeChannel(realtimeChannel);await supabase.auth.signOut();$('authGate').hidden=false;$('logoutBtn').hidden=true;});
+ var r=await supabase.auth.getSession();if(r.error){$('authError').textContent='Verbinding met Supabase mislukt.';return;}if(r.data.session)await startShared(r.data.session);
 }
 init();
 })();
