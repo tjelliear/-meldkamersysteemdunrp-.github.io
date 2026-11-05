@@ -1,2 +1,2 @@
-# -meldkamersysteemdunrp-.github.io
-Meldkamer systeem voor dunrp
+# GMS DNRP
+Let op enkel gebruiken bij toestemming van RS.
