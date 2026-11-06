@@ -224,20 +224,10 @@ select.field[data-urg]{border-left:6px solid var(--c)}
 .prop-tag{font-size:12px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--s1);color:var(--on)}
 .amb-link{display:flex;gap:8px;margin-top:8px}
 .amb-link .field{margin:0;flex:1}
-/* Supabase login */
-#authGate{position:fixed;inset:0;z-index:100;background:var(--bg);display:grid;place-items:center;padding:20px}
-#authCard{width:min(420px,100%);padding:24px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
-#authCard h2{margin:0 0 8px;font-size:25px}
-#authCard p{color:var(--ink-2)}
-#authError{color:var(--danger);min-height:1.4em}
- #recoveryCard{width:min(420px,100%);padding:24px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
- #recoveryCard h2{margin:0 0 8px;font-size:25px}
- #recoveryCard p{color:var(--ink-2)}
- #recoveryError{color:var(--danger);min-height:1.4em}
+/* Publiek testbord: geen inlogscherm */
 </style>
 </head>
 <body>
-<section id="authGate"><form id="authCard"><h2>Inloggen</h2><p>Log in om het gedeelde testbord te openen.</p><label for="authEmail">E-mailadres</label><input class="field" id="authEmail" type="email" autocomplete="username" required><label for="authPassword">Wachtwoord</label><input class="field" id="authPassword" type="password" autocomplete="current-password" required><button class="btn primary" id="authSubmit" type="submit">Inloggen</button><p id="authError" role="alert"></p><small>Gebruik uitsluitend fictieve testgegevens.</small></form><form id="recoveryCard" hidden><h2>Nieuw wachtwoord instellen</h2><p>Kies een nieuw wachtwoord voor je account.</p><label for="newPassword">Nieuw wachtwoord</label><input class="field" id="newPassword" type="password" autocomplete="new-password" minlength="8" required><label for="newPasswordAgain">Herhaal nieuw wachtwoord</label><input class="field" id="newPasswordAgain" type="password" autocomplete="new-password" minlength="8" required><button class="btn primary" id="recoverySubmit" type="submit">Wachtwoord opslaan</button><p id="recoveryError" role="alert"></p></form></section>
 <header class="top">
   <div class="row1">
     <h1>Roepnummers Zevenaar</h1>
@@ -245,7 +235,6 @@ select.field[data-urg]{border-left:6px solid var(--c)}
     <span class="spacer"></span>
     <input class="search" id="search" type="search" placeholder="Zoek op nummer, naam, functie of melding" aria-label="Zoeken" autocomplete="off">
     <button class="btn" id="exportBtn" hidden>Exporteer CSV</button>
-    <button class="btn" id="logoutBtn" hidden>Uitloggen</button>
     <button class="btn danger" id="resetBtn">Alles leegmaken</button>
   </div>
   <nav class="tabs" id="tabs" aria-label="Eenheid"></nav>
@@ -1471,22 +1460,32 @@ async function loadAll(){
  all[4].forEach(function(x){if(custom[x.section_id]&&x.data)custom[x.section_id][x.id]={nr:x.id,label:String(x.data.label||''),created:x.data.created||0};});
  rebuildCustom();rebuildData();render();
 }
-async function startShared(session){
- mode='shared';canWrite=true;$('authGate').hidden=true;$('logoutBtn').hidden=false;
- try{await loadAll();if(realtimeChannel)await supabase.removeChannel(realtimeChannel);realtimeChannel=supabase.channel('roepnummers-live');
- ['units','meldingen','ambmeldingen','ambparser','custom_units'].forEach(function(t){realtimeChannel.on('postgres_changes',{event:'*',schema:'public',table:t},function(){loadAll().catch(function(){toast('Live bijwerken is tijdelijk niet gelukt.');});});});
- realtimeChannel.subscribe(function(st){if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')$('modeText').textContent='Liveverbinding onderbroken';});renderMode();render();
- }catch(e){mode='error';$('authError').textContent='Gegevens laden is niet gelukt. Controleer tabellen en RLS-instellingen.';$('authGate').hidden=false;$('logoutBtn').hidden=true;renderMode();}
+async function startPublic(){
+ mode='shared';canWrite=true;
+ try{
+  await loadAll();
+  if(realtimeChannel)await supabase.removeChannel(realtimeChannel);
+  realtimeChannel=supabase.channel('roepnummers-live');
+  ['units','meldingen','ambmeldingen','ambparser','custom_units'].forEach(function(t){
+   realtimeChannel.on('postgres_changes',{event:'*',schema:'public',table:t},function(){
+    loadAll().catch(function(e){console.error('Live refresh failed:',e);toast('Live bijwerken is tijdelijk niet gelukt.');});
+   });
+  });
+  realtimeChannel.subscribe(function(st){
+   if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){$('modeText').textContent='Liveverbinding onderbroken';}
+  });
+  renderMode();render();
+ }catch(e){
+  console.error('Supabase data load failed:',e);
+  mode='error';renderMode();
+  toast('Gegevens laden is niet gelukt. Controleer de openbare testtoegang (RLS) in Supabase.');
+ }
 }
-async function init(){render();if(!window.supabase||!window.supabase.createClient){$('authError').textContent='Supabase kon niet laden. Vernieuw de pagina.';return;}
+async function init(){
+ render();
+ if(!window.supabase||!window.supabase.createClient){mode='error';renderMode();toast('Supabase kon niet laden. Vernieuw de pagina.');return;}
  supabase=window.supabase.createClient('https://zayesdvplgjzpfokdazk.supabase.co','sb_publishable__2gzIkMBjgZAJm-3PCDPXw_-8gNbJnJ1');
- $('authCard').addEventListener('submit',async function(e){e.preventDefault();var btn=$('authSubmit');btn.disabled=true;$('authError').textContent='Bezig met inloggen…';
- var r=await supabase.auth.signInWithPassword({email:$('authEmail').value.trim(),password:$('authPassword').value});btn.disabled=false;
- if(r.error){console.error('Supabase login error:',r.error);$('authError').textContent='Inloggen mislukt: '+(r.error.message||'Onbekende fout');return;}$('authPassword').value='';await startShared(r.data.session);});
- supabase.auth.onAuthStateChange(function(event){if(event==='PASSWORD_RECOVERY'){$('authCard').hidden=true;$('recoveryCard').hidden=false;$('authGate').hidden=false;$('logoutBtn').hidden=true;}});
- $('recoveryCard').addEventListener('submit',async function(e){e.preventDefault();var p=$('newPassword').value,p2=$('newPasswordAgain').value,btn=$('recoverySubmit');if(p.length<8){$('recoveryError').textContent='Gebruik minimaal 8 tekens.';return;}if(p!==p2){$('recoveryError').textContent='De wachtwoorden zijn niet hetzelfde.';return;}btn.disabled=true;$('recoveryError').textContent='Wachtwoord opslaan…';var r=await supabase.auth.updateUser({password:p});btn.disabled=false;if(r.error){$('recoveryError').textContent='Opslaan is niet gelukt. Vraag een nieuwe resetlink aan.';return;}await supabase.auth.signOut();$('recoveryCard').hidden=true;$('authCard').hidden=false;$('authPassword').value='';$('recoveryError').textContent='Je wachtwoord is aangepast. Je kunt nu inloggen.';$('authError').textContent='Je wachtwoord is aangepast. Log in met je nieuwe wachtwoord.';});
- $('logoutBtn').addEventListener('click',async function(){if(realtimeChannel)await supabase.removeChannel(realtimeChannel);await supabase.auth.signOut();$('authGate').hidden=false;$('logoutBtn').hidden=true;});
- var r=await supabase.auth.getSession();if(r.error){$('authError').textContent='Verbinding met Supabase mislukt.';return;}if(r.data.session)await startShared(r.data.session);
+ await startPublic();
 }
 init();
 })();
